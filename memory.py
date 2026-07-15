@@ -1,126 +1,109 @@
 """
-trainer.py
-----------
-The training pipeline for INNIE AI.
+memory.py
+---------
+INNIE AI's memory system.
 
-Takes raw text files from datasets/, builds a tokenizer vocabulary, turns
-the text into (context, target) next-token-prediction pairs using a
-sliding window, and trains InnieModel on them with plain SGD.
+Two tiers, mirroring how the roadmap describes memory:
 
-Run directly with:  python trainer.py
+1. Short-term memory: an in-RAM sliding window of the current
+   conversation, used to build context for the model.
+2. Long-term memory: a JSON file on disk that persists facts/notes
+   across restarts. This is intentionally simple (no vector search yet)
+   so it is easy to inspect, edit by hand, and later swap for a real
+   embeddings-based memory store without changing the public interface.
 """
 
-import glob
+import json
 import os
+import time
 
-from config import (
-    DATASETS_DIR,
-    CONTEXT_WINDOW,
-    LEARNING_RATE,
-    EPOCHS,
-    VOCAB_SIZE,
-    EMBEDDING_DIM,
-    HIDDEN_DIM,
-    WEIGHTS_PATH,
-    VOCAB_PATH,
-    ensure_directories,
-)
-from tokenizer import Tokenizer
-from model import InnieModel
+from config import SHORT_TERM_MEMORY_LIMIT, LONG_TERM_MEMORY_ENABLED, MEMORY_PATH
 
 
-def load_dataset_texts(datasets_dir: str = DATASETS_DIR) -> list[str]:
-    """Read every .txt file under datasets/ (recursively) into a list of strings."""
-    pattern = os.path.join(datasets_dir, "**", "*.txt")
-    texts = []
-    for filepath in glob.glob(pattern, recursive=True):
-        with open(filepath, "r", encoding="utf-8") as f:
-            content = f.read().strip()
-            if content:
-                texts.append(content)
-    return texts
+class Memory:
+    """Manages short-term conversation history and long-term persisted facts."""
 
+    def __init__(self, memory_path: str = MEMORY_PATH):
+        self.memory_path = memory_path
 
-def build_training_pairs(token_ids: list[int], context_window: int) -> list[tuple[list[int], int]]:
-    """
-    Slide a window over a token sequence to build (context, next_token) pairs.
+        # Short-term: list of {"role": "user"/"assistant", "text": str, "time": float}
+        self.short_term: list[dict] = []
 
-    Example with context_window=3 and tokens [A, B, C, D, E]:
-        ([A, B, C], D)
-        ([B, C, D], E)
-    """
-    pairs = []
-    for i in range(len(token_ids) - context_window):
-        context = token_ids[i: i + context_window]
-        target = token_ids[i + context_window]
-        pairs.append((context, target))
-    return pairs
+        # Long-term: list of persisted strings (facts, notes, summaries)
+        self.long_term: list[str] = []
 
+        if LONG_TERM_MEMORY_ENABLED:
+            self._load_long_term()
 
-def train(
-    epochs: int = EPOCHS,
-    learning_rate: float = LEARNING_RATE,
-    context_window: int = CONTEXT_WINDOW,
-    verbose: bool = True,
-) -> tuple[InnieModel, Tokenizer]:
-    """Run the full training pipeline and save the resulting model + vocab."""
-    ensure_directories()
+    # ------------------------------------------------------------------
+    # Short-term memory
+    # ------------------------------------------------------------------
+    def add_turn(self, role: str, text: str) -> None:
+        """Record one turn of the conversation (role is 'user' or 'assistant')."""
+        self.short_term.append({"role": role, "text": text, "time": time.time()})
 
-    texts = load_dataset_texts()
-    if not texts:
-        # Fall back to a tiny built-in sample so the pipeline always runs,
-        # even before any real dataset has been added.
-        texts = [
-            "INNIE AI is a modular artificial intelligence system built from scratch. "
-            "It learns to predict the next word in a sentence by studying examples. "
-            "Over time it will grow from a small nano network into a much larger model."
-        ]
-        if verbose:
-            print("No .txt files found in datasets/, using built-in sample text instead.")
+        # Keep only the most recent N turns to bound memory/context size
+        if len(self.short_term) > SHORT_TERM_MEMORY_LIMIT:
+            self.short_term = self.short_term[-SHORT_TERM_MEMORY_LIMIT:]
 
-    tokenizer = Tokenizer(vocab_size=VOCAB_SIZE)
-    tokenizer.build_vocab(texts)
-    tokenizer.save(VOCAB_PATH)
+    def get_recent_context(self, n: int = 5) -> str:
+        """Return the last `n` turns of conversation as a single text blob."""
+        recent = self.short_term[-n:]
+        lines = [f"{turn['role']}: {turn['text']}" for turn in recent]
+        return "\n".join(lines)
 
-    model = InnieModel(
-        vocab_size=len(tokenizer),
-        embedding_dim=EMBEDDING_DIM,
-        hidden_dim=HIDDEN_DIM,
-    )
+    def clear_short_term(self) -> None:
+        self.short_term = []
 
-    # Build training pairs across all documents
-    all_pairs = []
-    for text in texts:
-        ids = tokenizer.encode(text, add_special_tokens=True)
-        all_pairs.extend(build_training_pairs(ids, context_window))
+    # ------------------------------------------------------------------
+    # Long-term memory
+    # ------------------------------------------------------------------
+    def remember(self, fact: str) -> None:
+        """Persist a fact/note to long-term memory."""
+        if fact not in self.long_term:
+            self.long_term.append(fact)
+            self._save_long_term()
 
-    if not all_pairs:
-        raise ValueError(
-            "Not enough text to build a single training example. "
-            "Add longer documents to datasets/, or lower CONTEXT_WINDOW in config.py."
-        )
+    def forget(self, fact: str) -> bool:
+        """Remove a fact from long-term memory. Returns True if it was found."""
+        if fact in self.long_term:
+            self.long_term.remove(fact)
+            self._save_long_term()
+            return True
+        return False
 
-    if verbose:
-        print(f"Loaded {len(texts)} document(s), {len(all_pairs)} training pair(s), "
-              f"vocab size {len(tokenizer)}")
+    def recall_all(self) -> list[str]:
+        return list(self.long_term)
 
-    for epoch in range(1, epochs + 1):
-        total_loss = 0.0
-        for context, target in all_pairs:
-            model.forward(context)
-            loss = model.backward(target, learning_rate)
-            total_loss += loss
+    def search(self, keyword: str) -> list[str]:
+        """Very simple substring search over long-term memory."""
+        keyword_lower = keyword.lower()
+        return [f for f in self.long_term if keyword_lower in f.lower()]
 
-        avg_loss = total_loss / len(all_pairs)
-        if verbose and (epoch == 1 or epoch % max(1, epochs // 10) == 0 or epoch == epochs):
-            print(f"Epoch {epoch:>4}/{epochs} | avg loss: {avg_loss:.4f}")
+    # ------------------------------------------------------------------
+    # Persistence
+    # ------------------------------------------------------------------
+    def _save_long_term(self) -> None:
+        directory = os.path.dirname(self.memory_path)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+        with open(self.memory_path, "w", encoding="utf-8") as f:
+            json.dump(self.long_term, f, ensure_ascii=False, indent=2)
 
-    model.save(WEIGHTS_PATH)
-    if verbose:
-        print(f"Training complete. Weights saved to {WEIGHTS_PATH}, vocab saved to {VOCAB_PATH}")
-
-    return model, tokenizer
+    def _load_long_term(self) -> None:
+        if os.path.exists(self.memory_path):
+            with open(self.memory_path, "r", encoding="utf-8") as f:
+                self.long_term = json.load(f)
 
 
 if __name__ == "__main__":
-    train()
+    # Quick manual smoke test: `python memory.py`
+    mem = Memory(memory_path="memory_test.json")
+    mem.add_turn("user", "Hello INNIE")
+    mem.add_turn("assistant", "Hi Innocent, how can I help?")
+    mem.remember("User's company is INNIE Group.")
+
+    print("Recent context:\n", mem.get_recent_context())
+    print("Long-term memory:", mem.recall_all())
+
+    os.remove("memory_test.json")

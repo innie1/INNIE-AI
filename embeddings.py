@@ -1,79 +1,77 @@
 """
-config.py
----------
-Central configuration for INNIE AI.
+embeddings.py
+-------------
+A minimal, from-scratch embedding layer built on numpy.
 
-Every tunable value in the system lives here so that the rest of the
-codebase never hardcodes a "magic number". As INNIE AI grows from a
-tiny nano-network into something closer to a real language model,
-this is the file you will touch most often.
+An embedding layer is just a lookup table: each token id maps to a vector
+of learnable numbers. Those vectors are what the rest of the network
+reasons about. This class also implements its own forward/backward pass so
+it can be trained without any deep learning framework -- keeping INNIE AI
+dependency-light while still being "real" gradient-based learning.
 """
 
-import os
+import numpy as np
 
-# ---------------------------------------------------------------------------
-# Path configuration
-# ---------------------------------------------------------------------------
-# BASE_DIR points at the root of the INNIE-AI project (one level above backend/)
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-DATASETS_DIR = os.path.join(BASE_DIR, "datasets")
-MODELS_DIR = os.path.join(BASE_DIR, "models")
-CHECKPOINTS_DIR = os.path.join(BASE_DIR, "checkpoints")
-
-# Where the tokenizer stores its learned vocabulary
-VOCAB_PATH = os.path.join(MODELS_DIR, "vocab.json")
-
-# Where trained model weights are saved/loaded from
-WEIGHTS_PATH = os.path.join(CHECKPOINTS_DIR, "innie_weights.npz")
-
-# Where long-term conversational memory is persisted between runs
-MEMORY_PATH = os.path.join(BASE_DIR, "backend", "memory_store.json")
+from config import EMBEDDING_DIM, VOCAB_SIZE, SEED
 
 
-# ---------------------------------------------------------------------------
-# Model hyperparameters
-# ---------------------------------------------------------------------------
-# NOTE: These are intentionally small so the model trains fast on a laptop
-# with no GPU. Increase them as INNIE AI evolves into a larger system.
+class EmbeddingLayer:
+    """Learnable token_id -> vector lookup table."""
 
-VOCAB_SIZE = 4000        # Max number of tokens the tokenizer will learn
-EMBEDDING_DIM = 64       # Size of each token's embedding vector
-HIDDEN_DIM = 128         # Size of the hidden layer in the network
-CONTEXT_WINDOW = 16      # How many previous tokens the model looks at
-LEARNING_RATE = 0.05
-EPOCHS = 50
-BATCH_SIZE = 8
-SEED = 42                # Fixed seed for reproducible training runs
+    def __init__(self, vocab_size: int = VOCAB_SIZE, embedding_dim: int = EMBEDDING_DIM):
+        rng = np.random.default_rng(SEED)
+        self.vocab_size = vocab_size
+        self.embedding_dim = embedding_dim
+
+        # Small random initialization (standard practice: keeps early
+        # activations from exploding or vanishing).
+        self.weights = rng.normal(0, 0.02, size=(vocab_size, embedding_dim))
+
+        # Cache for the backward pass
+        self._last_ids: np.ndarray | None = None
+        self.grad_weights = np.zeros_like(self.weights)
+
+    def forward(self, token_ids: list[int]) -> np.ndarray:
+        """
+        Look up embeddings for a sequence of token ids.
+
+        Args:
+            token_ids: list of ints, length = sequence length
+        Returns:
+            array of shape (sequence_length, embedding_dim)
+        """
+        ids = np.array(token_ids, dtype=int)
+        ids = np.clip(ids, 0, self.vocab_size - 1)  # guard against out-of-range ids
+        self._last_ids = ids
+        return self.weights[ids]
+
+    def backward(self, grad_output: np.ndarray, learning_rate: float) -> None:
+        """
+        Apply gradients computed by later layers back onto the embedding table.
+
+        Args:
+            grad_output: gradient w.r.t. this layer's output, shape (seq_len, embedding_dim)
+            learning_rate: step size for the update
+        """
+        if self._last_ids is None:
+            raise RuntimeError("backward() called before forward()")
+
+        self.grad_weights.fill(0)
+        # Accumulate gradients for each token id that appeared in the sequence
+        np.add.at(self.grad_weights, self._last_ids, grad_output)
+
+        # Simple SGD update
+        self.weights -= learning_rate * self.grad_weights
+
+    def save(self, path: str) -> None:
+        np.save(path, self.weights)
+
+    def load(self, path: str) -> None:
+        self.weights = np.load(path)
 
 
-# ---------------------------------------------------------------------------
-# Memory system configuration
-# ---------------------------------------------------------------------------
-SHORT_TERM_MEMORY_LIMIT = 20   # Number of recent turns kept in RAM
-LONG_TERM_MEMORY_ENABLED = True
-
-
-# ---------------------------------------------------------------------------
-# API / server configuration
-# ---------------------------------------------------------------------------
-API_HOST = "127.0.0.1"
-API_PORT = 5050
-DEBUG_MODE = True
-
-
-# ---------------------------------------------------------------------------
-# Special tokens used by the tokenizer
-# ---------------------------------------------------------------------------
-PAD_TOKEN = "<PAD>"
-UNK_TOKEN = "<UNK>"
-BOS_TOKEN = "<BOS>"   # Beginning of sequence
-EOS_TOKEN = "<EOS>"
-
-SPECIAL_TOKENS = [PAD_TOKEN, UNK_TOKEN, BOS_TOKEN, EOS_TOKEN]
-
-
-def ensure_directories() -> None:
-    """Create every directory this project depends on if it doesn't exist yet."""
-    for path in (DATASETS_DIR, MODELS_DIR, CHECKPOINTS_DIR):
-        os.makedirs(path, exist_ok=True)
+if __name__ == "__main__":
+    # Quick manual smoke test: `python embeddings.py`
+    emb = EmbeddingLayer(vocab_size=50, embedding_dim=8)
+    vectors = emb.forward([1, 4, 7, 2])
+    print("Embedding output shape:", vectors.shape)

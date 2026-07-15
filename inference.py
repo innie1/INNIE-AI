@@ -1,77 +1,103 @@
 """
-embeddings.py
--------------
-A minimal, from-scratch embedding layer built on numpy.
+inference.py
+------------
+Loads a trained InnieModel + Tokenizer and generates text.
 
-An embedding layer is just a lookup table: each token id maps to a vector
-of learnable numbers. Those vectors are what the rest of the network
-reasons about. This class also implements its own forward/backward pass so
-it can be trained without any deep learning framework -- keeping INNIE AI
-dependency-light while still being "real" gradient-based learning.
+Generation strategy: simple temperature-based sampling, one token at a
+time, feeding each new token back in as part of the context window. This
+is the same basic loop that larger autoregressive language models use --
+INNIE AI just uses a much smaller network under the hood for now.
 """
 
+import os
 import numpy as np
 
-from config import EMBEDDING_DIM, VOCAB_SIZE, SEED
+from config import (
+    CONTEXT_WINDOW,
+    VOCAB_SIZE,
+    EMBEDDING_DIM,
+    HIDDEN_DIM,
+    WEIGHTS_PATH,
+    VOCAB_PATH,
+)
+from tokenizer import Tokenizer
+from model import InnieModel
 
 
-class EmbeddingLayer:
-    """Learnable token_id -> vector lookup table."""
+class InnieInference:
+    """Wraps a trained model + tokenizer for easy text generation."""
 
-    def __init__(self, vocab_size: int = VOCAB_SIZE, embedding_dim: int = EMBEDDING_DIM):
-        rng = np.random.default_rng(SEED)
-        self.vocab_size = vocab_size
-        self.embedding_dim = embedding_dim
+    def __init__(self, weights_path: str = WEIGHTS_PATH, vocab_path: str = VOCAB_PATH):
+        self.tokenizer = Tokenizer(vocab_size=VOCAB_SIZE)
 
-        # Small random initialization (standard practice: keeps early
-        # activations from exploding or vanishing).
-        self.weights = rng.normal(0, 0.02, size=(vocab_size, embedding_dim))
+        if os.path.exists(vocab_path):
+            self.tokenizer.load(vocab_path)
+        else:
+            raise FileNotFoundError(
+                f"No vocab found at {vocab_path}. Run trainer.py first to train a model."
+            )
 
-        # Cache for the backward pass
-        self._last_ids: np.ndarray | None = None
-        self.grad_weights = np.zeros_like(self.weights)
+        self.model = InnieModel(
+            vocab_size=len(self.tokenizer),
+            embedding_dim=EMBEDDING_DIM,
+            hidden_dim=HIDDEN_DIM,
+        )
 
-    def forward(self, token_ids: list[int]) -> np.ndarray:
+        if os.path.exists(weights_path):
+            self.model.load(weights_path)
+        else:
+            raise FileNotFoundError(
+                f"No trained weights found at {weights_path}. Run trainer.py first."
+            )
+
+    def _sample(self, probs: np.ndarray, temperature: float) -> int:
+        """Sample a token id from a probability distribution with temperature scaling."""
+        if temperature <= 0:
+            return int(np.argmax(probs))  # greedy decoding
+
+        # Apply temperature: lower = more confident/deterministic, higher = more random
+        logits = np.log(probs + 1e-9) / temperature
+        scaled_probs = np.exp(logits) / np.sum(np.exp(logits))
+        return int(np.random.choice(len(scaled_probs), p=scaled_probs))
+
+    def generate(
+        self,
+        prompt: str,
+        max_new_tokens: int = 30,
+        temperature: float = 0.8,
+    ) -> str:
         """
-        Look up embeddings for a sequence of token ids.
+        Generate a continuation for `prompt`.
 
         Args:
-            token_ids: list of ints, length = sequence length
+            prompt: the input text to continue from
+            max_new_tokens: how many tokens to generate
+            temperature: sampling temperature (0 = greedy/deterministic)
         Returns:
-            array of shape (sequence_length, embedding_dim)
+            The generated text (prompt not included).
         """
-        ids = np.array(token_ids, dtype=int)
-        ids = np.clip(ids, 0, self.vocab_size - 1)  # guard against out-of-range ids
-        self._last_ids = ids
-        return self.weights[ids]
+        context_ids = self.tokenizer.encode(prompt, add_special_tokens=True)
+        eos_id = self.tokenizer.token_to_id.get("<EOS>")
 
-    def backward(self, grad_output: np.ndarray, learning_rate: float) -> None:
-        """
-        Apply gradients computed by later layers back onto the embedding table.
+        generated_ids = []
+        for _ in range(max_new_tokens):
+            # Only look at the most recent CONTEXT_WINDOW tokens
+            window = context_ids[-CONTEXT_WINDOW:]
+            probs = self.model.forward(window)
+            next_id = self._sample(probs, temperature)
 
-        Args:
-            grad_output: gradient w.r.t. this layer's output, shape (seq_len, embedding_dim)
-            learning_rate: step size for the update
-        """
-        if self._last_ids is None:
-            raise RuntimeError("backward() called before forward()")
+            if next_id == eos_id:
+                break
 
-        self.grad_weights.fill(0)
-        # Accumulate gradients for each token id that appeared in the sequence
-        np.add.at(self.grad_weights, self._last_ids, grad_output)
+            generated_ids.append(next_id)
+            context_ids.append(next_id)
 
-        # Simple SGD update
-        self.weights -= learning_rate * self.grad_weights
-
-    def save(self, path: str) -> None:
-        np.save(path, self.weights)
-
-    def load(self, path: str) -> None:
-        self.weights = np.load(path)
+        return self.tokenizer.decode(generated_ids)
 
 
 if __name__ == "__main__":
-    # Quick manual smoke test: `python embeddings.py`
-    emb = EmbeddingLayer(vocab_size=50, embedding_dim=8)
-    vectors = emb.forward([1, 4, 7, 2])
-    print("Embedding output shape:", vectors.shape)
+    # Quick manual smoke test: `python inference.py`
+    # (Requires trainer.py to have been run first.)
+    engine = InnieInference()
+    response = engine.generate("Hello INNIE", max_new_tokens=20)
+    print("Generated:", response)
