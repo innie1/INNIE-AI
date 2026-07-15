@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.Python
+*.egg-info/
+.eggs/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Trained model artifacts (large / regenerable -- don't commit binaries)
+checkpoints/*.npz
+models/vocab.json
+models/*.npy
+
+# Memory / runtime state
+backend/memory_store.json
+
+# OS / editor cruft
+.DS_Store
+.vscode/
+.idea/
+*.log
+
+# Test cache
+.pytest_cache/
