@@ -1,79 +1,73 @@
 """
-brain.py
---------
-The orchestrator that ties everything together: tokenizer, model,
-inference, and memory. This is the single object api.py talks to --
-it is the closest thing INNIE AI has to a "mind".
+api.py
+------
+A small local Flask API that lets frontend/chat.html talk to Brain.
 
-Responsibilities:
-    1. Load (or lazily train) the model + tokenizer.
-    2. Keep track of conversation memory.
-    3. Turn a user message into a generated reply.
+Endpoints:
+    GET  /api/health          -> simple status check
+    POST /api/chat            -> {"message": str} -> {"reply": str}
+    GET  /api/memory          -> list long-term memory facts
+    POST /api/memory          -> {"fact": str} -> remember a new fact
 
-Keeping this orchestration logic in one place means the API layer stays
-thin, and the model/tokenizer/memory internals can change independently.
+Run with:  python api.py
+Then open frontend/chat.html in a browser.
 """
 
-import os
+from flask import Flask, request, jsonify
+from flask_cors import CORS
 
-from config import WEIGHTS_PATH, VOCAB_PATH
-from memory import Memory
+from config import API_HOST, API_PORT, DEBUG_MODE
+from brain import Brain
+
+app = Flask(__name__)
+CORS(app)  # allow the frontend (opened as a local file / different port) to call this API
+
+# One shared Brain instance for the lifetime of the server process
+brain = Brain()
 
 
-class Brain:
-    """High-level interface: Brain.think(user_message) -> reply string."""
+@app.route("/api/health", methods=["GET"])
+def health():
+    """Simple endpoint the frontend can ping to confirm the API is alive."""
+    return jsonify({
+        "status": "ok",
+        "trained": brain.is_trained(),
+    })
 
-    def __init__(self):
-        self.memory = Memory()
-        self.engine = None  # lazily loaded InnieInference instance
-        self._try_load_engine()
 
-    def _try_load_engine(self) -> None:
-        """Load a trained model if one exists; otherwise stay in fallback mode."""
-        if os.path.exists(WEIGHTS_PATH) and os.path.exists(VOCAB_PATH):
-            from inference import InnieInference  # imported lazily to avoid
-            self.engine = InnieInference()          # circular-import surprises
+@app.route("/api/chat", methods=["POST"])
+def chat():
+    """Main chat endpoint: takes a user message, returns INNIE AI's reply."""
+    data = request.get_json(silent=True) or {}
+    message = data.get("message", "").strip()
 
-    def is_trained(self) -> bool:
-        return self.engine is not None
+    if not message:
+        return jsonify({"error": "Field 'message' is required and cannot be empty."}), 400
 
-    def think(self, user_message: str, max_new_tokens: int = 30, temperature: float = 0.8) -> str:
-        """
-        Process one user message and return INNIE AI's reply.
+    reply = brain.think(message)
+    return jsonify({"reply": reply})
 
-        This also records the exchange into short-term memory so future
-        turns in the same session have conversational context available.
-        """
-        self.memory.add_turn("user", user_message)
 
-        if self.engine is None:
-            reply = (
-                "I haven't been trained yet, so I can't generate a real response. "
-                "Run `python trainer.py` from the backend/ folder first, "
-                "then restart the server."
-            )
-        else:
-            reply = self.engine.generate(
-                user_message,
-                max_new_tokens=max_new_tokens,
-                temperature=temperature,
-            )
-            if not reply.strip():
-                reply = "(I generated an empty response -- try training on more data.)"
+@app.route("/api/memory", methods=["GET"])
+def get_memory():
+    """Return everything currently stored in long-term memory."""
+    return jsonify({"facts": brain.recall_facts()})
 
-        self.memory.add_turn("assistant", reply)
-        return reply
 
-    def remember_fact(self, fact: str) -> None:
-        """Expose long-term memory writing to the API layer."""
-        self.memory.remember(fact)
+@app.route("/api/memory", methods=["POST"])
+def post_memory():
+    """Add a new fact to long-term memory."""
+    data = request.get_json(silent=True) or {}
+    fact = data.get("fact", "").strip()
 
-    def recall_facts(self) -> list[str]:
-        return self.memory.recall_all()
+    if not fact:
+        return jsonify({"error": "Field 'fact' is required and cannot be empty."}), 400
+
+    brain.remember_fact(fact)
+    return jsonify({"status": "remembered", "fact": fact})
 
 
 if __name__ == "__main__":
-    # Quick manual smoke test: `python brain.py`
-    brain = Brain()
-    print("Trained:", brain.is_trained())
-    print(brain.think("Hello INNIE, who are you?"))
+    print(f"INNIE AI API starting on http://{API_HOST}:{API_PORT}")
+    print(f"Model trained: {brain.is_trained()}")
+    app.run(host=API_HOST, port=API_PORT, debug=DEBUG_MODE)
