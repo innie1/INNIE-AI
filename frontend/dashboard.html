@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>INNIE AI — Live Dashboard</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #0f0f1a;
+            --bg-card: #1a1a2e;
+            --bg-card-hover: #252540;
+            --text: #e0e0e0;
+            --text-muted: #8888a0;
+            --accent: #10a37f;
+            --accent-glow: rgba(16,163,127,0.3);
+            --danger: #e94560;
+            --warning: #f4a261;
+            --border: #2a2a4e;
+            --radius: 12px;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            padding: 24px;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 24px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .header h1 {
+            font-size: 24px;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--accent), #4ecdc4);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .status-badge {
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .status-badge.online {
+            background: rgba(16,163,127,0.15);
+            color: var(--accent);
+            border: 1px solid var(--accent);
+        }
+
+        .status-badge.offline {
+            background: rgba(233,69,96,0.15);
+            color: var(--danger);
+            border: 1px solid var(--danger);
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 20px;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+        }
+
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+
+        .card-title {
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .card-value {
+            font-size: 32px;
+            font-weight: 700;
+            color: var(--text);
+            margin-bottom: 4px;
+        }
+
+        .card-sub {
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        .card-delta {
+            font-size: 12px;
+            font-weight: 600;
+            padding: 2px 8px;
+            border-radius: 4px;
+        }
+
+        .card-delta.positive {
+            background: rgba(16,163,127,0.15);
+            color: var(--accent);
+        }
+
+        .card-delta.negative {
+            background: rgba(233,69,96,0.15);
+            color: var(--danger);
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 6px;
+            background: var(--bg);
+            border-radius: 3px;
+            margin-top: 12px;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            height: 100%;
+            border-radius: 3px;
+            transition: width 0.5s ease;
+        }
+
+        .progress-fill.cpu { background: linear-gradient(90deg, var(--accent), #4ecdc4); }
+        .progress-fill.ram { background: linear-gradient(90deg, var(--warning), #e9c46a); }
+        .progress-fill.gpu { background: linear-gradient(90deg, var(--danger), #f4a261); }
+
+        .chart-container {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 20px;
+            margin-bottom: 16px;
+        }
+
+        .chart-title {
+            font-size: 14px;
+            font-weight: 600;
+            margin-bottom: 16px;
+            color: var(--text);
+        }
+
+        canvas {
+            width: 100%;
+            height: 200px;
+        }
+
+        .logs-container {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 20px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .log-entry {
+            font-family: 'Consolas', monospace;
+            font-size: 12px;
+            padding: 6px 0;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            gap: 12px;
+        }
+
+        .log-time { color: var(--text-muted); min-width: 80px; }
+        .log-event { color: var(--accent); min-width: 120px; }
+        .log-metrics { color: var(--text); flex: 1; }
+
+        .refresh-indicator {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--accent);
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+
+        .gpu-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 12px;
+        }
+
+        .gpu-card {
+            background: var(--bg);
+            border-radius: 8px;
+            padding: 12px;
+        }
+
+        .gpu-card h4 {
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-bottom: 8px;
+        }
+
+        .gpu-metric {
+            display: flex;
+            justify-content: space-between;
+            font-size: 13px;
+            margin-bottom: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="refresh-indicator" id="refreshIndicator"></div>
+
+    <div class="header">
+        <h1>🔮 INNIE AI Live Dashboard</h1>
+        <span class="status-badge online" id="statusBadge">LIVE</span>
+    </div>
+
+    <!-- System Overview -->
+    <div class="grid">
+        <div class="card">
+            <div class="card-header">
+                <span class="card-title">CPU Usage</span>
+                <span class="card-delta positive" id="cpuDelta">--</span>
+            </div>
+            <div class="card-value" id="cpuValue">--%</div>
+            <div class="card-sub">Process CPU utilization</div>
+            <div class="progress-bar"><div class="progress-fill cpu" id="cpuBar" style="width:0%"></div></div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <span class="card-title">RAM Usage</span>
+                <span class="card-delta positive" id="ramDelta">--</span>
+            </div>
+            <div class="card-value" id="ramValue">-- MB</div>
+            <div class="card-sub">Resident Set Size (RSS)</div>
+            <div class="progress-bar"><div class="progress-fill ram" id="ramBar" style="width:0%"></div></div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <span class="card-title">GPU Status</span>
+                <span class="card-delta" id="gpuDelta">--</span>
+            </div>
+            <div class="card-value" id="gpuValue">--</div>
+            <div class="card-sub" id="gpuSub">No GPU detected</div>
+            <div class="progress-bar"><div class="progress-fill gpu" id="gpuBar" style="width:0%"></div></div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <span class="card-title">Last Inference</span>
+                <span class="card-delta positive" id="infDelta">--</span>
+            </div>
+            <div class="card-value" id="infValue">--</div>
+            <div class="card-sub" id="infSub">Tokens per second</div>
+        </div>
+    </div>
+
+    <!-- GPU Details -->
+    <div class="chart-container" id="gpuSection" style="display:none;">
+        <div class="chart-title">🎮 GPU Details</div>
+        <div class="gpu-grid" id="gpuGrid"></div>
+    </div>
+
+    <!-- Charts -->
+    <div class="chart-container">
+        <div class="chart-title">📈 Inference Latency (ms)</div>
+        <canvas id="latencyChart"></canvas>
+    </div>
+
+    <div class="chart-container">
+        <div class="chart-title">🚀 Throughput (tokens/sec)</div>
+        <canvas id="throughputChart"></canvas>
+    </div>
+
+    <!-- Live Logs -->
+    <div class="chart-container">
+        <div class="chart-title">📝 Recent Events</div>
+        <div class="logs-container" id="logsContainer">
+            <div class="log-entry"><span class="log-time">--:--</span><span class="log-event">WAITING</span><span class="log-metrics">Connecting to API...</span></div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://127.0.0.1:5050';
+        const MAX_POINTS = 60;
+        let latencyData = [];
+        let throughputData = [];
+        let lastSnapshot = null;
+
+        // ── Charts ──────────────────────────────────────────────────
+        function drawLineChart(canvasId, data, color, label) {
+            const canvas = document.getElementById(canvasId);
+            const ctx = canvas.getContext('2d');
+            const w = canvas.width = canvas.offsetWidth;
+            const h = canvas.height = canvas.offsetHeight;
+            const padding = 30;
+
+            ctx.clearRect(0, 0, w, h);
+
+            if (data.length < 2) return;
+
+            const maxVal = Math.max(...data, 1);
+            const minVal = Math.min(...data, 0);
+            const range = maxVal - minVal || 1;
+
+            // Grid
+            ctx.strokeStyle = '#2a2a4e';
+            ctx.lineWidth = 1;
+            for (let i = 0; i <= 4; i++) {
+                const y = padding + (h - 2 * padding) * (i / 4);
+                ctx.beginPath();
+                ctx.moveTo(padding, y);
+                ctx.lineTo(w - padding, y);
+                ctx.stroke();
+            }
+
+            // Line
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            data.forEach((val, i) => {
+                const x = padding + (w - 2 * padding) * (i / (MAX_POINTS - 1));
+                const y = padding + (h - 2 * padding) * (1 - (val - minVal) / range);
+                if (i === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            });
+            ctx.stroke();
+
+            // Fill
+            ctx.fillStyle = color + '20';
+            ctx.beginPath();
+            const lastX = padding + (w - 2 * padding) * ((data.length - 1) / (MAX_POINTS - 1));
+            ctx.moveTo(padding, h - padding);
+            data.forEach((val, i) => {
+                const x = padding + (w - 2 * padding) * (i / (MAX_POINTS - 1));
+                const y = padding + (h - 2 * padding) * (1 - (val - minVal) / range);
+                ctx.lineTo(x, y);
+            });
+            ctx.lineTo(lastX, h - padding);
+            ctx.closePath();
+            ctx.fill();
+
+            // Label
+            ctx.fillStyle = '#8888a0';
+            ctx.font = '11px Inter';
+            ctx.fillText(label + ': ' + data[data.length - 1].toFixed(2), padding, padding - 8);
+        }
+
+        // ── Data Fetching ───────────────────────────────────────────
+        async function fetchSnapshot() {
+            try {
+                const res = await fetch(API_BASE + '/api/health');
+                const data = await res.json();
+                updateSystemCards(data);
+                document.getElementById('statusBadge').textContent = 'LIVE';
+                document.getElementById('statusBadge').className = 'status-badge online';
+            } catch (e) {
+                document.getElementById('statusBadge').textContent = 'OFFLINE';
+                document.getElementById('statusBadge').className = 'status-badge offline';
+            }
+        }
+
+        async function fetchPerformance() {
+            try {
+                const res = await fetch(API_BASE + '/api/performance?event=inference_complete');
+                const data = await res.json();
+                if (data.summary && data.summary.tokens_per_sec) {
+                    const tps = data.summary.tokens_per_sec.mean;
+                    throughputData.push(tps);
+                    if (throughputData.length > MAX_POINTS) throughputData.shift();
+                    drawLineChart('throughputChart', throughputData, '#10a37f', 'Throughput');
+                    document.getElementById('infValue').textContent = tps.toFixed(1);
+                }
+                if (data.summary && data.summary.latency_per_token_sec) {
+                    const lat = data.summary.latency_per_token_sec.mean * 1000;
+                    latencyData.push(lat);
+                    if (latencyData.length > MAX_POINTS) latencyData.shift();
+                    drawLineChart('latencyChart', latencyData, '#e94560', 'Latency');
+                }
+            } catch (e) {}
+        }
+
+        async function fetchLogs() {
+            try {
+                const res = await fetch(API_BASE + '/api/performance');
+                const data = await res.json();
+                if (data.summary) {
+                    // Just show we got data
+                }
+            } catch (e) {}
+        }
+
+        function updateSystemCards(data) {
+            if (!data) return;
+
+            // CPU
+            const cpu = data.cpu_percent || 0;
+            document.getElementById('cpuValue').textContent = cpu.toFixed(1) + '%';
+            document.getElementById('cpuBar').style.width = Math.min(cpu, 100) + '%';
+            if (lastSnapshot) {
+                const delta = cpu - (lastSnapshot.cpu_percent || 0);
+                const el = document.getElementById('cpuDelta');
+                el.textContent = (delta >= 0 ? '+' : '') + delta.toFixed(1) + '%';
+                el.className = 'card-delta ' + (delta >= 0 ? 'positive' : 'negative');
+            }
+
+            // RAM
+            const ram = data.memory_mb || 0;
+            document.getElementById('ramValue').textContent = ram.toFixed(0) + ' MB';
+            const ramPercent = Math.min((ram / 4096) * 100, 100); // assume 4GB baseline
+            document.getElementById('ramBar').style.width = ramPercent + '%';
+            if (lastSnapshot) {
+                const delta = ram - (lastSnapshot.memory_mb || 0);
+                const el = document.getElementById('ramDelta');
+                el.textContent = (delta >= 0 ? '+' : '') + delta.toFixed(0) + ' MB';
+                el.className = 'card-delta ' + (delta >= 0 ? 'negative' : 'positive');
+            }
+
+            // GPU
+            if (data.gpu && data.gpu[0] && data.gpu[0].available) {
+                const gpu = data.gpu[0];
+                document.getElementById('gpuValue').textContent = gpu.utilization_percent + '%';
+                document.getElementById('gpuSub').textContent = gpu.memory_used_mb.toFixed(0) + ' / ' + gpu.memory_total_mb.toFixed(0) + ' MB';
+                document.getElementById('gpuBar').style.width = Math.min(gpu.utilization_percent, 100) + '%';
+                document.getElementById('gpuSection').style.display = 'block';
+
+                // GPU grid
+                const grid = document.getElementById('gpuGrid');
+                grid.innerHTML = data.gpu.map((g, i) => `
+                    <div class="gpu-card">
+                        <h4>GPU ${i}</h4>
+                        <div class="gpu-metric"><span>Utilization</span><span>${g.utilization_percent}%</span></div>
+                        <div class="gpu-metric"><span>Memory</span><span>${g.memory_used_mb.toFixed(0)} MB</span></div>
+                        <div class="gpu-metric"><span>Temperature</span><span>${g.temperature_c}°C</span></div>
+                    </div>
+                `).join('');
+            } else {
+                document.getElementById('gpuValue').textContent = 'N/A';
+                document.getElementById('gpuSub').textContent = 'No GPU detected';
+                document.getElementById('gpuBar').style.width = '0%';
+            }
+
+            lastSnapshot = data;
+        }
+
+        function addLogEntry(timestamp, event, metrics) {
+            const container = document.getElementById('logsContainer');
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            entry.innerHTML = `
+                <span class="log-time">${timestamp}</span>
+                <span class="log-event">${event}</span>
+                <span class="log-metrics">${metrics}</span>
+            `;
+            container.insertBefore(entry, container.firstChild);
+            while (container.children.length > 50) {
+                container.removeChild(container.lastChild);
+            }
+        }
+
+        // ── Polling ─────────────────────────────────────────────────
+        function poll() {
+            fetchSnapshot();
+            fetchPerformance();
+        }
+
+        poll();
+        setInterval(poll, 2000);
+
+        // Handle resize
+        window.addEventListener('resize', () => {
+            drawLineChart('latencyChart', latencyData, '#e94560', 'Latency');
+            drawLineChart('throughputChart', throughputData, '#10a37f', 'Throughput');
+        });
+    </script>
+</body>
+</html>
