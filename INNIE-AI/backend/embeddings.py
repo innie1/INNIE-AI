@@ -25,11 +25,11 @@ class EmbeddingLayer:
 
         # Small random initialization (standard practice: keeps early
         # activations from exploding or vanishing).
-        self.weights = rng.normal(0, 0.02, size=(vocab_size, embedding_dim))
+        self.weights = rng.normal(0, 0.02, size=(vocab_size, embedding_dim)).astype(np.float32)
 
         # Cache for the backward pass
         self._last_ids: np.ndarray | None = None
-        self.grad_weights = np.zeros_like(self.weights)
+        self.grad_weights = np.zeros_like(self.weights, dtype=np.float32)
 
     def forward(self, token_ids: list[int]) -> np.ndarray:
         """

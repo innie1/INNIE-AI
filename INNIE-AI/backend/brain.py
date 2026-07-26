@@ -25,8 +25,12 @@ class Brain:
     def _try_load_engine(self) -> None:
         """Load a trained model if one exists; otherwise stay in fallback mode."""
         if os.path.exists(WEIGHTS_PATH) and os.path.exists(VOCAB_PATH):
-            from inference import InnieInference
-            self.engine = InnieInference(weights_path=WEIGHTS_PATH, vocab_path=VOCAB_PATH)
+            try:
+                from inference import InferenceEngine
+                self.engine = InferenceEngine(weights_path=WEIGHTS_PATH, vocab_path=VOCAB_PATH)
+            except Exception as e:
+                print(f"[Brain] Error loading inference engine: {e}")
+                self.engine = None
 
     def is_trained(self) -> bool:
         self._try_load_engine()

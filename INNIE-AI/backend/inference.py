@@ -200,5 +200,8 @@ def interactive_demo():
     engine.perf.print_summary("inference_complete")
 
 
+InnieInference = InferenceEngine
+
+
 if __name__ == "__main__":
     interactive_demo()
