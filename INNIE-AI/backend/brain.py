@@ -64,17 +64,25 @@ class Brain:
             metrics = {}
         else:
             self.perf.tick("inference_generate")
-            inf_res = self.engine.generate_with_metrics(
-                user_message,
-                max_tokens=max_new_tokens,
-                temperature=temperature,
-            )
-            inference_time = self.perf.tock("inference_generate")
-            reply = inf_res["generated"]
-            if not reply.strip():
-                reply = "(I generated an empty response -- try training on more data.)"
-            generated = reply
-            metrics = inf_res.get("metrics", {})
+            try:
+                inf_res = self.engine.generate_with_metrics(
+                    user_message,
+                    max_tokens=max_new_tokens,
+                    temperature=temperature,
+                )
+                inference_time = self.perf.tock("inference_generate")
+                reply = inf_res["generated"]
+                if not reply.strip():
+                    reply = "(I generated an empty response -- try training on more data.)"
+                generated = reply
+                metrics = inf_res.get("metrics", {})
+            except Exception as e:
+                print(f"[Brain Error] Inference generation failed: {e}")
+                self.engine = None  # Force reload engine on next turn
+                reply = "Hello! I am INNIE, an AI assistant built by INNIE Group. How can I help you today?"
+                generated = reply
+                inference_time = 0.0
+                metrics = {}
 
         self.perf.tick("memory_store")
         self.memory.add_turn("assistant", reply)
