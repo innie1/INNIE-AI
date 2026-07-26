@@ -25,7 +25,6 @@ autograd framework, matching the rest of the codebase's "transparent, no
 hidden magic" philosophy.
 """
 
-import os
 import numpy as np
 
 from config import EMBEDDING_DIM, HIDDEN_DIM, VOCAB_SIZE, CONTEXT_WINDOW, SEED
@@ -59,23 +58,23 @@ class InnieModel:
         # Learnable positional embeddings: one vector per position in the
         # context window. This is what lets the model tell "cat sat" apart
         # from "sat cat" -- the mean-pool version could not.
-        self.pos_embedding = rng.normal(0, 0.02, size=(context_window, embedding_dim)).astype(np.float32)
+        self.pos_embedding = rng.normal(0, 0.02, size=(context_window, embedding_dim))
 
         # Self-attention projections (single head, Q/K/V/output)
         d = embedding_dim
         attn_scale = np.sqrt(2 / d)
-        self.Wq = rng.normal(0, attn_scale, size=(d, d)).astype(np.float32)
-        self.Wk = rng.normal(0, attn_scale, size=(d, d)).astype(np.float32)
-        self.Wv = rng.normal(0, attn_scale, size=(d, d)).astype(np.float32)
-        self.Wo = rng.normal(0, attn_scale, size=(d, d)).astype(np.float32)
+        self.Wq = rng.normal(0, attn_scale, size=(d, d))
+        self.Wk = rng.normal(0, attn_scale, size=(d, d))
+        self.Wv = rng.normal(0, attn_scale, size=(d, d))
+        self.Wo = rng.normal(0, attn_scale, size=(d, d))
 
         # Feedforward head (applied to the last position only, same as the
         # v0.0.1 dense block so checkpoints/config stay compatible in shape)
-        self.W1 = rng.normal(0, np.sqrt(2 / embedding_dim), size=(embedding_dim, hidden_dim)).astype(np.float32)
-        self.b1 = np.zeros(hidden_dim, dtype=np.float32)
+        self.W1 = rng.normal(0, np.sqrt(2 / embedding_dim), size=(embedding_dim, hidden_dim))
+        self.b1 = np.zeros(hidden_dim)
 
-        self.W2 = rng.normal(0, np.sqrt(2 / hidden_dim), size=(hidden_dim, vocab_size)).astype(np.float32)
-        self.b2 = np.zeros(vocab_size, dtype=np.float32)
+        self.W2 = rng.normal(0, np.sqrt(2 / hidden_dim), size=(hidden_dim, vocab_size))
+        self.b2 = np.zeros(vocab_size)
 
         self._cache = {}
 
@@ -237,7 +236,6 @@ class InnieModel:
     # Persistence
     # ------------------------------------------------------------------
     def save(self, path: str) -> None:
-        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
         np.savez(
             path,
             embedding=self.embedding.weights,
