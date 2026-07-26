@@ -60,20 +60,30 @@ class InferenceEngine:
             "vocab_size": len(self.tokenizer),
         })
 
-    def _sample(self, probs: np.ndarray, temperature: float) -> int:
-        """Sample a token id from a probability distribution with temperature scaling."""
-        if temperature <= 0:
+    def _sample(self, probs: np.ndarray, temperature: float = 0.3, top_k: int = 5) -> int:
+        """Sample a token id using Top-K filtering and temperature scaling to prevent garbled outputs."""
+        if temperature <= 0.05:
             return int(np.argmax(probs))
 
-        logits = np.log(probs + 1e-9) / temperature
-        scaled_probs = np.exp(logits) / np.sum(np.exp(logits))
-        return int(np.random.choice(len(scaled_probs), p=scaled_probs))
+        top_k = min(top_k, len(probs))
+        top_indices = np.argsort(probs)[-top_k:]
+        top_probs = probs[top_indices]
+        top_probs = top_probs / np.sum(top_probs)
+
+        if temperature != 1.0:
+            logits = np.log(top_probs + 1e-9) / max(temperature, 0.05)
+            exp_logits = np.exp(logits - np.max(logits))
+            scaled_probs = exp_logits / np.sum(exp_logits)
+        else:
+            scaled_probs = top_probs
+
+        return int(np.random.choice(top_indices, p=scaled_probs))
 
     def generate(
         self,
         prompt: str,
         max_new_tokens: int = 30,
-        temperature: float = 0.8,
+        temperature: float = 0.3,
     ) -> str:
         """Backward-compatible generation returning generated string."""
         res = self.generate_with_metrics(prompt, max_tokens=max_new_tokens, temperature=temperature)
@@ -83,7 +93,7 @@ class InferenceEngine:
         self,
         prompt: str,
         max_tokens: int = API_MAX_TOKENS,
-        temperature: float = 1.0,
+        temperature: float = 0.3,
     ) -> Dict[str, Any]:
         """
         Generate text from a prompt with rich performance metrics.
@@ -130,7 +140,13 @@ class InferenceEngine:
         tokens_per_sec = token_meter.rate()
         latency_per_token = total_time / len(generated_ids) if generated_ids else 0.0
 
-        generated_text = self.tokenizer.decode(generated_ids)
+        raw_generated = self.tokenizer.decode(generated_ids)
+        # Clean special tokens from output text
+        cleaned = raw_generated
+        for tag in ["<EOS>", "<PAD>", "<INNIE>", "<USER>", "<SYSTEM>", "<ASSISTANT>"]:
+            cleaned = cleaned.replace(tag, "")
+        generated_text = " ".join(cleaned.split()).strip()
+
         full_text = prompt + " " + generated_text
 
         mem = self.perf.get_memory_mb()

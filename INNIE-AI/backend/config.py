@@ -57,7 +57,7 @@ LONG_TERM_MEMORY_ENABLED = True
 API_HOST = "127.0.0.1"
 API_PORT = 5050
 API_MAX_TOKENS = 50
-API_TEMPERATURE = 1.0
+API_TEMPERATURE = 0.3
 DEBUG_MODE = True
 
 # ---------------------------------------------------------------------------
